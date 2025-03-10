@@ -8,6 +8,32 @@ Created on Fri Mar  7 13:09:26 2025
 import netCDF4 as nc
 import pandas as pd
 import os
+import numpy as np
+from datetime import datetime, timedelta
+
+def convert_seconds_to_datetime(nc_time_var):
+    """
+    Convert a NetCDF time variable (seconds since 1990-01-01) to datetime timestamps.
+
+    :param nc_time_var: NetCDF time variable (numpy array or list).
+    :return: NumPy array of datetime objects.
+    """
+    ref_date = datetime(1990, 1, 1)
+
+    # Ensure input is a NumPy array
+    nc_time_var = np.array(nc_time_var, dtype=float)
+
+    # Mask invalid values (NaN, inf, negative)
+    valid_mask = np.isfinite(nc_time_var) & (nc_time_var >= 0)
+
+    # Initialize an array with None values
+    datetime_array = np.full(nc_time_var.shape, None, dtype=object)
+
+    # Convert valid values to datetime
+    datetime_array[valid_mask] = [ref_date + timedelta(seconds=t) for t in nc_time_var[valid_mask]]
+
+    return datetime_array
+
 
 def write_netcdf_to_csv(netcdf_paths, output_dir):
     """
@@ -32,7 +58,10 @@ def write_netcdf_to_csv(netcdf_paths, output_dir):
             data = dataset.variables[var][:].flatten()
             data_length = len(data)
             
-            if data_length == 1:
+            if var == 'time':
+                t = convert_seconds_to_datetime(dataset.variables[var][:])
+            
+            elif data_length == 1:
                 headers[var] = data[0]  # Store single-value variables as headers
             else:
                 if data_length not in length_groups:
@@ -43,6 +72,9 @@ def write_netcdf_to_csv(netcdf_paths, output_dir):
         if length_groups:
             first_length = next(iter(length_groups))
             df = pd.DataFrame(length_groups[first_length])
+            
+            df.insert(5,'time',t)
+            df['time'] = df['time'].dt.round('H')
             
             # Convert headers into a DataFrame and prepend them to the main DataFrame
             if headers:
