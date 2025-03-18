@@ -33,7 +33,7 @@ def create_torch_set(data, lookback):
         target = data[i+1:i+lookback+1]
         X.append(feature)
         y.append(target)
-    return torch.tensor(X), torch.tensor(y)
+    return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
 lookback = 1
 X_train, y_train = create_torch_set(train_set,lookback)
@@ -52,7 +52,8 @@ class Model(nn.Module):
         x,_ = self.lstm(x)
         x = self.linear(x)
         return x
-
+    
+input_dim = features.shape[1]
 model = Model().float()
 opt = optim.Adam(model.parameters())
 loss_fn = nn.MSELoss()
