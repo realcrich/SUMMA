@@ -75,8 +75,10 @@ def masked_mse_loss(pred, target):
         return torch.tensor(0.0, requires_grad=True)  # Return zero loss
     return func.mse_loss(pred[mask], target[mask])
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Read in SNOTEL data for training
-DF_IN = pd.read_csv('C:/Users/Collin/SUMMA/SUMMA_shared/summaTestCases_3.0/testCases_data/inputData/fieldData/sagehen/forcing_sagehen_2541.csv')
+DF_IN = pd.read_csv('C:/Users/Collin/SUMMA/SUMMA_shared/summaTestCases_3.0/testCases_data/inputData/fieldData/sagehen/forcing_sagehen_2124.csv')
 DF_OUT = pd.read_csv('C:/Users/Collin/SUMMA/SUMMA_shared/sapflux/DailyTotals_922_T4N.csv')
 
 df_in = slice_df_by_date(DF_IN, 'timestamp', 2016, 2, 1, 2019, 9, 30)
@@ -91,6 +93,7 @@ df_in['VPD'] = calculate_vpd(df_in['TA'],df_in['RH'])
 
 # Drop RH and PSUM from dataframe (we are using SpecHum and Precip rate instead)
 df_in = df_in.loc[:,['timestamp','TA','ISWR','VPD']]
+#df_in = df_in.loc[:,['timestamp','TA','VW','Prate','RH','ISWR','VPD']]
 
 # Convert timestamp to datetime
 df_in['timestamp'] = pd.to_datetime(df_in['timestamp'])
@@ -116,7 +119,7 @@ df_in = df_in.drop(columns=['timestamp'], errors='ignore')
 # be used as an input feature to the model & ensure all input feature values 
 # are dtype float32 for use with PyTorch
 
-df_in = df_in.iloc[:, 2:5].copy().astype(np.float32)
+df_in = df_in.iloc[:, 2:].copy().astype(np.float32)
 df_out = df_out.iloc[:,1:].copy().astype(np.float32)
 
 # Just select one sensor for now to train on 
@@ -141,14 +144,56 @@ df_out.iloc[1::2] = 0
 df_out.reset_index(drop=True, inplace=True)
 
 df_out = df_out[:len(df_in)]
+
+'''
+elevations = [1962, 2124, 2541]
+df_in_list = []
+
+for i, elev in enumerate(elevations):
+    path = f'C:/Users/Collin/SUMMA/SUMMA_shared/summaTestCases_3.0/testCases_data/inputData/fieldData/sagehen/forcing_sagehen_{elev}.csv'
+    df = pd.read_csv(path)
+    df = slice_df_by_date(df, 'timestamp', 2016, 2, 1, 2019, 9, 30)
+    df['VPD'] = calculate_vpd(df['TA'], df['RH'])
+    df = df.loc[:, ['timestamp', 'TA', 'ISWR', 'VPD']]
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df[~df['timestamp'].dt.month.isin([10,11,12,1])]
+    df['period'] = df['timestamp'].dt.hour.apply(time_period)
+    df['date'] = df['timestamp'].dt.date
+    #df = df.groupby(['date', 'period']).mean().reset_index()
+    df['elevation_id'] = i  # embed this later
+    df_in_list.append(df)
+    
+def extract_tower_id(fname):
+    tower_id = 0
+    ID = str(fname[-7:-4])
+    if ID == 'T4S':
+        tower_id = 1
+    else:
+        pass
+    return tower_id
+
+out_dir = 'C:/Users/Collin/SUMMA/SUMMA_shared/sapflux/DailyTotals_'
+out_paths = [out_dir+'922_T4N.csv', out_dir+'922_T4S.csv', out_dir+'1217_T4N.csv', out_dir+'1217_T4S.csv']
+
+df_out_list = []
+for path in out_paths:
+    df = pd.read_csv(path)
+    df = slice_df_by_date(df, 'Date', 2016, 2, 1, 2019, 9, 30)
+    tower_id = extract_tower_id(path)
+    df['tower_ID'] = tower_id
+    #df_melt = df.melt(id_vars=['Date'], var_name='sensor_id', value_name='sapflow')
+    #df_melt['tower_id'] = tower_id
+    df_out_list.append(df)
+'''
+
 ###################################################################################################
 #### the dataframe should now be ready to be converted to PyTorch tensors for use in the model ####
 ###################################################################################################
 
 # Define some model parameters here to use later
 n_features = df_in.shape[1]
-n_hidden = 256#2*n_features**2
-n_layers = 4#2
+n_hidden = 64#2*n_features**2
+n_layers = 2#2
 #n_output = df_out.shape[1]
 
 # this is arbitrary for now but select sizes for the training and testing sets
@@ -158,7 +203,7 @@ test_set_len = int(len(df_in) - train_set_len)
 # Define 'lookback', for us specifies how to chunk hourly data up (tentatively using 3, 8-hour chunks for 1 24-hr period)
 #lookback = 8
 #lookback = 24    # Try using 24 to represent assigning 24 hourly input values to 1 daily sum target output 
-lookback = 2    # Here, 2 represents one day(04:00-21:00) or night(21:00-04:00) cycle
+lookback = 8    # Here, 2 represents one day(04:00-21:00) or night(21:00-04:00) cycle
 
 # use function above to create PyTorch tensors
 #X_train, y_train = create_torch_set(df_in[:train_set_len*lookback],df_out[:train_set_len],lookback)
@@ -168,11 +213,14 @@ lookback = 2    # Here, 2 represents one day(04:00-21:00) or night(21:00-04:00) 
 X_train, y_train = create_torch_set(df_in[:train_set_len],df_out[:train_set_len],lookback)
 X_test, y_test = create_torch_set(df_in[train_set_len:],df_out[train_set_len:],lookback)
 
+X_train, y_train = X_train.to(device), y_train.to(device)
+X_test, y_test = X_test.to(device), y_test.to(device)
+
 # Print training/testing set shapes, just for a check
 print(X_train.shape, y_train.shape)
 print(X_test.shape, y_test.shape)
 
-
+'''
 # Define model architecture, for now very simple using 1 LSTM block and 1 linear block 
 class Model(nn.Module):
     def __init__(self,input_size,hidden_size,num_layers):
@@ -185,21 +233,41 @@ class Model(nn.Module):
         x,_ = self.lstm(x)
         x = self.linear(x[:,-1,:])
         return x
+'''
+
+# Define model architecture, for now very simple using 1 LSTM block and 1 linear block 
+class Model(nn.Module):
+    def __init__(self,input_size,hidden_size,num_layers):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size=input_size,hidden_size=hidden_size,
+                            num_layers=num_layers,batch_first=True,dropout=0.3)#,
+                            #bidirectional=True)    # add bidirectionalality due to sparse target values
+        self.fc1 = nn.Linear(hidden_size,hidden_size//2)
+        self.fc2 = nn.Linear(hidden_size//2,1)
+        self.relu = nn.ReLU()
+        #self.linear = nn.Linear(hidden_size,1)    # need to 2x hidden size for bidirectionality
+    def forward(self,x):
+        x,_ = self.lstm(x)
+        x = self.fc1(x[:,-1,:])
+        x = self.relu(x)
+        x = self.fc2(x)
+        return x
 
 # Call model using specified parameters, name optimizer and loss functions, and create dataLoader
 model = Model(n_features,n_hidden,n_layers).float()
-opt = optim.Adam(model.parameters(), lr=0.0001)   # set lower learning rate 
+model.to(device)
+opt = optim.Adam(model.parameters(), lr=0.00001)   # set lower learning rate 
 loss_fn = nn.MSELoss()
 loader = data.DataLoader(data.TensorDataset(X_train, y_train),shuffle=True,batch_size=8)    # low batch size for comp. efficiency
 
 # specifiy number of epochs to use for training
-n_epochs = 1000
+n_epochs = 2000
 
 # Train model and calculate loss, print for every 100th epoch to monitor training progress
 for epoch in range(n_epochs): 
     model.train()
     for X_batch, y_batch in loader:
-        
+        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         if torch.isnan(y_batch).all():  # Skip batch if all targets are NaN
             continue 
         
@@ -214,11 +282,15 @@ for epoch in range(n_epochs):
         continue
     model.eval()
     with torch.no_grad():
-        y_pred = model(X_train)
+        #y_pred_train = model(X_train)
+        y_pred_train = model(X_train.to(device))
         #train_rmse = np.sqrt(loss_fn(y_pred, y_train))
-        train_rmse = torch.sqrt(masked_mse_loss(y_pred, y_train))
-        y_pred = model(X_test)
+        #train_rmse = torch.sqrt(masked_mse_loss(y_pred, y_train))
+        train_rmse = torch.sqrt(masked_mse_loss(y_pred_train,y_train.to(device)))
+        #y_pred = model(X_test)
+        y_pred_test = model(X_test.to(device))
         #test_rmse = np.sqrt(loss_fn(y_pred, y_test))
-        test_rmse = torch.sqrt(masked_mse_loss(y_pred, y_test))
+        #test_rmse = torch.sqrt(masked_mse_loss(y_pred, y_test))
+        test_rmse = torch.sqrt(masked_mse_loss(y_pred_test,y_test.to(device)))
     print("Epoch %d: train RMSE %.4f, test RMSE %.4f" % (epoch, train_rmse, test_rmse))
     
