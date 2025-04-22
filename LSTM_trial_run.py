@@ -100,7 +100,7 @@ df_in['timestamp'] = pd.to_datetime(df_in['timestamp'])
 
 # Filter out months October (10) through January (1)
 df_in = df_in[~df_in['timestamp'].dt.month.isin([10, 11, 12, 1])]
-
+'''
 # Define function to categorize periods
 def time_period(hour):
     return 'day' if 4 <= hour < 21 else 'night'
@@ -111,7 +111,7 @@ df_in['date'] = df_in['timestamp'].dt.date
 
 # Compute mean and overwrite df_in
 df_in = df_in.groupby(['date', 'period']).mean().reset_index()
-
+'''
 # Drop unnecessary columns
 df_in = df_in.drop(columns=['timestamp'], errors='ignore')
 
@@ -119,33 +119,85 @@ df_in = df_in.drop(columns=['timestamp'], errors='ignore')
 # be used as an input feature to the model & ensure all input feature values 
 # are dtype float32 for use with PyTorch
 
-df_in = df_in.iloc[:, 2:].copy().astype(np.float32)
+#df_in = df_in.iloc[:, 2:].copy().astype(np.float32)
 df_out = df_out.iloc[:,1:].copy().astype(np.float32)
 
 # Just select one sensor for now to train on 
 #df_out = df_out['X10']
 
-# Take average reading over all sensors for each timestep to yield one target value per timestamp 
-df_out = df_out.mean(axis=1)
+df_out['min'] = df_out.min(axis=1)
+df_out['max'] = df_out.max(axis=1)
+df_out['std'] = df_out.std(axis=1)
 
-# Normalize to confine range (0,1) after averaging sensors
-df_out = (df_out-df_out.min())/(df_out.max()-df_out.min())
+# Take average reading over all sensors for each timestep to yield one target value per timestamp 
+df_out['mean'] = df_out.mean(axis=1)
+
+#df_out = (df_out - df_out.min()) / (df_out.max() - df_out.min())
+# Normalize each stat column independently (column-wise)
+df_out['mean'] = (df_out['mean'] - df_out['mean'].min()) / (df_out['mean'].max() - df_out['mean'].min())
+df_out['min'] = (df_out['min'] - df_out['min'].min()) / (df_out['min'].max() - df_out['min'].min())
+df_out['max'] = (df_out['max'] - df_out['max'].min()) / (df_out['max'].max() - df_out['max'].min())
+df_out['std'] = df_out['std'] / df_out['std'].max()
 
 # Double the length of df_out
-df_out = df_out.reindex(np.arange(len(df_out) * 2))
+#df_out = df_out.reindex(np.arange(len(df_out) * 2))
 
 # Assign original values to even indices
-df_out.iloc[::2] = df_out.iloc[:len(df_out)//2].values
+#df_out.iloc[::2] = df_out.iloc[:len(df_out)//2].values
 
 # Assign 0s to odd indices (nighttime)
-df_out.iloc[1::2] = 0
+#df_out.iloc[1::2] = 0
 
 # Reset index to maintain a clean structure
-df_out.reset_index(drop=True, inplace=True)
+#df_out.reset_index(drop=True, inplace=True)
 
-df_out = df_out[:len(df_in)]
+#df_out = df_out[:len(df_in)]
+df_in_target_vars = pd.DataFrame({'target_min':df_out['min'],'target_max':df_out['max'],'target_std':df_out['std']})
+# Repeat each row 24 times (assuming 24 hourly entries per day)
+df_in_target_vars = df_in_target_vars.loc[df_in_target_vars.index.repeat(24)].reset_index(drop=True)
 
+# Trim in case it's slightly longer than df_in
+df_in_target_vars = df_in_target_vars.iloc[:len(df_in)].copy()
+
+# Concatenate with df_in
+#df_in = pd.concat([df_in.reset_index(drop=True), df_in_target_vars], axis=1)
+
+df_out = df_out['mean'].squeeze()
 '''
+df_sm_T4N = pd.read_csv('C:/Users/Collin/SUMMA/SUMMA_shared/sapflux/T4n_combine1.csv')
+df_sm_T4N = df_sm_T4N.loc[:,['TIMESTAMP','VWC_1_Avg','VWC_2_Avg','VWC_3_Avg']]
+df_sm_T4N['TIMESTAMP'] = pd.to_datetime(df_sm_T4N['TIMESTAMP']).dt.tz_localize(None)
+df_sm_T4N.set_index('TIMESTAMP',inplace=True)
+df_sm = df_sm_T4N.resample('H').mean().reset_index()
+df_sm = slice_df_by_date(df_sm, 'TIMESTAMP', 2016, 2, 1, 2019, 9, 30)
+df_sm = df_sm[~df_sm['TIMESTAMP'].dt.month.isin([10,11,12,1])]
+#df_in = df_in.set_index('timestamp',drop=False,inplace=True)
+#df_sm = df_sm.set_index('TIMESTAMP',drop=False,inplace=True)
+#df_sm.index.tz_localize(None)
+#df_in.index.tz_localize(None)
+#df_sm = df_sm.reindex(df_in.index)
+#df_sm = df_sm.loc[:,['TIMESTAMP','VWC_1_Avg','VWC_2_Avg','VWC_3_Avg']]
+# Align with df_in
+df_sm = df_sm.set_index('TIMESTAMP').reindex(df_in['timestamp'].values).reset_index()
+df_sm = df_sm.rename(columns={'index': 'timestamp'})
+# Drop unnecessary columns
+df_in = df_in.drop(columns=['timestamp'], errors='ignore')
+# Merge or keep separately
+df_in = pd.concat([df_in.reset_index(drop=True), df_sm[['VWC_1_Avg', 'VWC_2_Avg', 'VWC_3_Avg']]], axis=1)
+
+# List of VWC columns to apply the mask logic to
+vwc_cols = ['VWC_1_Avg', 'VWC_2_Avg', 'VWC_3_Avg']
+
+for col in vwc_cols:
+    mask_col = col + '_mask'
+
+    # Create a boolean mask: True where original value is NaN
+    df_in[mask_col] = df_in[col].isna()
+
+    # Set NaNs in original column to 0
+    df_in[col].fillna(0.0, inplace=True)
+
+
 elevations = [1962, 2124, 2541]
 df_in_list = []
 
@@ -192,10 +244,10 @@ for path in out_paths:
 
 # Define some model parameters here to use later
 n_features = df_in.shape[1]
-n_hidden = 64#2*n_features**2
+n_hidden = 16#64#2*n_features**2
 n_layers = 2#2
 #n_output = df_out.shape[1]
-
+'''
 # this is arbitrary for now but select sizes for the training and testing sets
 train_set_len = int(0.7*len(df_in))
 test_set_len = int(len(df_in) - train_set_len)
@@ -203,15 +255,19 @@ test_set_len = int(len(df_in) - train_set_len)
 # Define 'lookback', for us specifies how to chunk hourly data up (tentatively using 3, 8-hour chunks for 1 24-hr period)
 #lookback = 8
 #lookback = 24    # Try using 24 to represent assigning 24 hourly input values to 1 daily sum target output 
-lookback = 8    # Here, 2 represents one day(04:00-21:00) or night(21:00-04:00) cycle
+lookback = 24   # Here, 2 represents one day(04:00-21:00) or night(21:00-04:00) cycle
 
 # use function above to create PyTorch tensors
 #X_train, y_train = create_torch_set(df_in[:train_set_len*lookback],df_out[:train_set_len],lookback)
 #X_test, y_test = create_torch_set(df_in[train_set_len*lookback:],df_out[train_set_len:],lookback)
 
 # use function above to create PyTorch tensors
-X_train, y_train = create_torch_set(df_in[:train_set_len],df_out[:train_set_len],lookback)
-X_test, y_test = create_torch_set(df_in[train_set_len:],df_out[train_set_len:],lookback)
+#X_train, y_train = create_torch_set(df_in[:train_set_len],df_out[:train_set_len],lookback)
+#X_test, y_test = create_torch_set(df_in[train_set_len:],df_out[train_set_len:],lookback)
+
+# use function above to create PyTorch tensors
+X_train, y_train = create_torch_set(df_in[:int(0.7*len(df_in))],df_out[:int(0.7*len(df_out))],lookback)
+X_test, y_test = create_torch_set(df_in[:int(0.7*len(df_in))],df_out[:int(0.7*len(df_out))],lookback)
 
 X_train, y_train = X_train.to(device), y_train.to(device)
 X_test, y_test = X_test.to(device), y_test.to(device)
@@ -220,7 +276,7 @@ X_test, y_test = X_test.to(device), y_test.to(device)
 print(X_train.shape, y_train.shape)
 print(X_test.shape, y_test.shape)
 
-'''
+
 # Define model architecture, for now very simple using 1 LSTM block and 1 linear block 
 class Model(nn.Module):
     def __init__(self,input_size,hidden_size,num_layers):
@@ -234,13 +290,45 @@ class Model(nn.Module):
         x = self.linear(x[:,-1,:])
         return x
 '''
+# Define lookback (24 hourly steps = 1 daily output)
+lookback = 24
+
+# Number of samples = number of full daily windows
+num_samples = len(df_in) // lookback
+
+# Clip to exact multiple of 24
+df_in = df_in.iloc[:num_samples * lookback]
+df_out = df_out.iloc[:num_samples]
+
+# Split point based on daily samples
+split_idx = int(0.7 * num_samples)
+
+# Split hourly input by sample count (not raw index)
+X_train_in = df_in.iloc[:split_idx * lookback]
+X_test_in = df_in.iloc[split_idx * lookback:]
+
+# Split daily output
+y_train_out = df_out.iloc[:split_idx]
+y_test_out = df_out.iloc[split_idx:]
+
+# Create torch datasets
+X_train, y_train = create_torch_set(X_train_in, y_train_out, lookback)
+X_test, y_test = create_torch_set(X_test_in, y_test_out, lookback)
+
+# Move to device
+X_train, y_train = X_train.to(device), y_train.to(device)
+X_test, y_test = X_test.to(device), y_test.to(device)
+
+# Print shapes
+print("X_train:", X_train.shape, "y_train:", y_train.shape)
+print("X_test:", X_test.shape, "y_test:", y_test.shape)
 
 # Define model architecture, for now very simple using 1 LSTM block and 1 linear block 
 class Model(nn.Module):
     def __init__(self,input_size,hidden_size,num_layers):
         super().__init__()
         self.lstm = nn.LSTM(input_size=input_size,hidden_size=hidden_size,
-                            num_layers=num_layers,batch_first=True,dropout=0.3)#,
+                            num_layers=num_layers,batch_first=True,dropout=0.5)#,
                             #bidirectional=True)    # add bidirectionalality due to sparse target values
         self.fc1 = nn.Linear(hidden_size,hidden_size//2)
         self.fc2 = nn.Linear(hidden_size//2,1)
@@ -256,12 +344,12 @@ class Model(nn.Module):
 # Call model using specified parameters, name optimizer and loss functions, and create dataLoader
 model = Model(n_features,n_hidden,n_layers).float()
 model.to(device)
-opt = optim.Adam(model.parameters(), lr=0.00001)   # set lower learning rate 
+opt = optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)   # set lower learning rate 
 loss_fn = nn.MSELoss()
 loader = data.DataLoader(data.TensorDataset(X_train, y_train),shuffle=True,batch_size=8)    # low batch size for comp. efficiency
 
 # specifiy number of epochs to use for training
-n_epochs = 2000
+n_epochs = 5000
 
 # Train model and calculate loss, print for every 100th epoch to monitor training progress
 for epoch in range(n_epochs): 
