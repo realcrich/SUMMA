@@ -100,20 +100,9 @@ df_in['timestamp'] = pd.to_datetime(df_in['timestamp'])
 
 # Filter out months October (10) through January (1)
 df_in = df_in[~df_in['timestamp'].dt.month.isin([10, 11, 12, 1])]
-'''
-# Define function to categorize periods
-def time_period(hour):
-    return 'day' if 4 <= hour < 21 else 'night'
 
-# Create new columns for grouping
-df_in['period'] = df_in['timestamp'].dt.hour.apply(time_period)
-df_in['date'] = df_in['timestamp'].dt.date
-
-# Compute mean and overwrite df_in
-df_in = df_in.groupby(['date', 'period']).mean().reset_index()
-'''
 # Drop unnecessary columns
-df_in = df_in.drop(columns=['timestamp'], errors='ignore')
+#df_in = df_in.drop(columns=['timestamp'], errors='ignore')
 
 # make a copy of the dataframe without the timestamps included since they won't
 # be used as an input feature to the model & ensure all input feature values 
@@ -125,19 +114,19 @@ df_out = df_out.iloc[:,1:].copy().astype(np.float32)
 # Just select one sensor for now to train on 
 #df_out = df_out['X10']
 
-df_out['min'] = df_out.min(axis=1)
-df_out['max'] = df_out.max(axis=1)
-df_out['std'] = df_out.std(axis=1)
+#df_out['min'] = df_out.min(axis=1)
+#df_out['max'] = df_out.max(axis=1)
+#df_out['std'] = df_out.std(axis=1)
 
 # Take average reading over all sensors for each timestep to yield one target value per timestamp 
-df_out['mean'] = df_out.mean(axis=1)
+df_out = df_out.mean(axis=1)
 
-#df_out = (df_out - df_out.min()) / (df_out.max() - df_out.min())
+df_out = (df_out - df_out.min()) / (df_out.max() - df_out.min())
 # Normalize each stat column independently (column-wise)
-df_out['mean'] = (df_out['mean'] - df_out['mean'].min()) / (df_out['mean'].max() - df_out['mean'].min())
-df_out['min'] = (df_out['min'] - df_out['min'].min()) / (df_out['min'].max() - df_out['min'].min())
-df_out['max'] = (df_out['max'] - df_out['max'].min()) / (df_out['max'].max() - df_out['max'].min())
-df_out['std'] = df_out['std'] / df_out['std'].max()
+#df_out['mean'] = (df_out['mean'] - df_out['mean'].min()) / (df_out['mean'].max() - df_out['mean'].min())
+#df_out['min'] = (df_out['min'] - df_out['min'].min()) / (df_out['min'].max() - df_out['min'].min())
+#df_out['max'] = (df_out['max'] - df_out['max'].min()) / (df_out['max'].max() - df_out['max'].min())
+#df_out['std'] = df_out['std'] / df_out['std'].max()
 
 # Double the length of df_out
 #df_out = df_out.reindex(np.arange(len(df_out) * 2))
@@ -152,20 +141,20 @@ df_out['std'] = df_out['std'] / df_out['std'].max()
 #df_out.reset_index(drop=True, inplace=True)
 
 #df_out = df_out[:len(df_in)]
-df_in_target_vars = pd.DataFrame({'target_min':df_out['min'],'target_max':df_out['max'],'target_std':df_out['std']})
+#df_in_target_vars = pd.DataFrame({'target_min':df_out['min'],'target_max':df_out['max'],'target_std':df_out['std']})
 # Repeat each row 24 times (assuming 24 hourly entries per day)
-df_in_target_vars = df_in_target_vars.loc[df_in_target_vars.index.repeat(24)].reset_index(drop=True)
+#df_in_target_vars = df_in_target_vars.loc[df_in_target_vars.index.repeat(24)].reset_index(drop=True)
 
 # Trim in case it's slightly longer than df_in
-df_in_target_vars = df_in_target_vars.iloc[:len(df_in)].copy()
+#df_in_target_vars = df_in_target_vars.iloc[:len(df_in)].copy()
 
 # Concatenate with df_in
 #df_in = pd.concat([df_in.reset_index(drop=True), df_in_target_vars], axis=1)
 
-df_out = df_out['mean'].squeeze()
-'''
+#df_out = df_out['mean'].squeeze()
+
 df_sm_T4N = pd.read_csv('C:/Users/Collin/SUMMA/SUMMA_shared/sapflux/T4n_combine1.csv')
-df_sm_T4N = df_sm_T4N.loc[:,['TIMESTAMP','VWC_1_Avg','VWC_2_Avg','VWC_3_Avg']]
+df_sm_T4N = df_sm_T4N.loc[:,['TIMESTAMP','ST_1_Avg','ST_2_Avg','ST_3_Avg']]
 df_sm_T4N['TIMESTAMP'] = pd.to_datetime(df_sm_T4N['TIMESTAMP']).dt.tz_localize(None)
 df_sm_T4N.set_index('TIMESTAMP',inplace=True)
 df_sm = df_sm_T4N.resample('H').mean().reset_index()
@@ -180,13 +169,39 @@ df_sm = df_sm[~df_sm['TIMESTAMP'].dt.month.isin([10,11,12,1])]
 # Align with df_in
 df_sm = df_sm.set_index('TIMESTAMP').reindex(df_in['timestamp'].values).reset_index()
 df_sm = df_sm.rename(columns={'index': 'timestamp'})
+
+
+# Define function to categorize periods
+def time_period(hour):
+    return 'day' if 4 <= hour < 21 else 'night'
+
+# Create new columns for grouping
+df_in['period'] = df_in['timestamp'].dt.hour.apply(time_period)
+df_in['date'] = df_in['timestamp'].dt.date
+
+# Compute mean and overwrite df_in
+df_in = df_in.groupby(['date', 'period']).mean().reset_index()
+
 # Drop unnecessary columns
-df_in = df_in.drop(columns=['timestamp'], errors='ignore')
+#df_in = df_in.drop(columns=['timestamp'], errors='ignore')
+
+# First, prepare df_sm in the same way as df_in
+df_sm['period'] = df_sm['TIMESTAMP'].dt.hour.apply(time_period)
+df_sm['date'] = df_sm['TIMESTAMP'].dt.date
+
+# Average soil moisture values by date and period (day/night)
+df_sm_grouped = df_sm.groupby(['date', 'period']).mean().reset_index()
+
+# Aggregate df_in by date and period again
+df_in_grouped = df_in.groupby(['date', 'period']).mean().reset_index()
+
+# Now merge df_sm into df_in using a left join to preserve all df_in rows
+df_in = pd.merge(df_in_grouped, df_sm_grouped, on=['date', 'period'], how='left')
 # Merge or keep separately
-df_in = pd.concat([df_in.reset_index(drop=True), df_sm[['VWC_1_Avg', 'VWC_2_Avg', 'VWC_3_Avg']]], axis=1)
+#df_in = pd.concat([df_in.reset_index(drop=True), df_sm[['ST_1_Avg', 'ST_2_Avg', 'ST_3_Avg']]], axis=1)
 
 # List of VWC columns to apply the mask logic to
-vwc_cols = ['VWC_1_Avg', 'VWC_2_Avg', 'VWC_3_Avg']
+vwc_cols = ['ST_1_Avg', 'ST_2_Avg', 'ST_3_Avg']
 
 for col in vwc_cols:
     mask_col = col + '_mask'
@@ -196,7 +211,11 @@ for col in vwc_cols:
 
     # Set NaNs in original column to 0
     df_in[col].fillna(0.0, inplace=True)
+    
+# Drop unnecessary columns
+df_in = df_in.drop(columns=['date','period'], errors='ignore')
 
+'''
 
 elevations = [1962, 2124, 2541]
 df_in_list = []
@@ -245,7 +264,7 @@ for path in out_paths:
 # Define some model parameters here to use later
 n_features = df_in.shape[1]
 n_hidden = 16#64#2*n_features**2
-n_layers = 2#2
+n_layers = 1#2
 #n_output = df_out.shape[1]
 '''
 # this is arbitrary for now but select sizes for the training and testing sets
@@ -291,7 +310,7 @@ class Model(nn.Module):
         return x
 '''
 # Define lookback (24 hourly steps = 1 daily output)
-lookback = 24
+lookback = 2
 
 # Number of samples = number of full daily windows
 num_samples = len(df_in) // lookback
@@ -301,7 +320,7 @@ df_in = df_in.iloc[:num_samples * lookback]
 df_out = df_out.iloc[:num_samples]
 
 # Split point based on daily samples
-split_idx = int(0.7 * num_samples)
+split_idx = int(0.8 * num_samples)
 
 # Split hourly input by sample count (not raw index)
 X_train_in = df_in.iloc[:split_idx * lookback]
@@ -344,12 +363,12 @@ class Model(nn.Module):
 # Call model using specified parameters, name optimizer and loss functions, and create dataLoader
 model = Model(n_features,n_hidden,n_layers).float()
 model.to(device)
-opt = optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)   # set lower learning rate 
+opt = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)   # set lower learning rate 
 loss_fn = nn.MSELoss()
-loader = data.DataLoader(data.TensorDataset(X_train, y_train),shuffle=True,batch_size=8)    # low batch size for comp. efficiency
+loader = data.DataLoader(data.TensorDataset(X_train, y_train),shuffle=False,batch_size=1)    # low batch size for comp. efficiency
 
 # specifiy number of epochs to use for training
-n_epochs = 5000
+n_epochs = 1500
 
 # Train model and calculate loss, print for every 100th epoch to monitor training progress
 for epoch in range(n_epochs): 
@@ -381,4 +400,76 @@ for epoch in range(n_epochs):
         #test_rmse = torch.sqrt(masked_mse_loss(y_pred, y_test))
         test_rmse = torch.sqrt(masked_mse_loss(y_pred_test,y_test.to(device)))
     print("Epoch %d: train RMSE %.4f, test RMSE %.4f" % (epoch, train_rmse, test_rmse))
+    
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+import seaborn as sns
+
+# Move test tensors to CPU and convert to numpy
+y_true = y_test.cpu().numpy().flatten()
+y_pred = model(X_test).detach().cpu().numpy().flatten()
+
+# Mask NaNs (common in sapflow data)
+mask = ~np.isnan(y_true)
+y_true = y_true[mask]
+y_pred = y_pred[mask]
+
+# Compute errors and metrics
+errors = y_true - y_pred
+r2 = r2_score(y_true, y_pred)
+rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+mae = mean_absolute_error(y_true, y_pred)
+
+# Confidence intervals (95%) from residual std
+residual_std = np.std(errors)
+ci_upper = y_pred + 1.96 * residual_std
+ci_lower = y_pred - 1.96 * residual_std
+
+# Plot 1: Time series with 95% CI
+plt.figure(figsize=(10, 4))
+plt.plot(y_true, label='Actual', linewidth=2)
+plt.plot(y_pred, label='Predicted', alpha=0.7)
+plt.fill_between(np.arange(len(y_pred)), ci_lower, ci_upper, color='gray', alpha=0.3, label='95% CI')
+plt.xlabel('Sample Index')
+plt.ylabel('Target Value')
+plt.title('Time Series: Actual vs. Predicted with 95% Confidence Interval')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Plot 2: Scatter plot (Prediction vs Actual)
+plt.figure(figsize=(6, 6))
+sns.scatterplot(x=y_true, y=y_pred, alpha=0.6)
+plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], '--r')
+plt.xlabel('Actual')
+plt.ylabel('Predicted')
+plt.title(f'Scatter: R² = {r2:.2f}, RMSE = {rmse:.2f}')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Plot 3: Residuals
+plt.figure(figsize=(10, 4))
+plt.plot(errors, label='Residuals')
+plt.axhline(0, color='r', linestyle='--')
+plt.xlabel('Sample Index')
+plt.ylabel('Error')
+plt.title('Residuals (Actual - Predicted)')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# Plot 4: Histogram of residuals
+plt.figure(figsize=(6, 4))
+sns.histplot(errors, bins=30, alpha=0.7)
+plt.axvline(0, color='r', linestyle='--')
+plt.xlabel('Residual')
+plt.ylabel('Frequency')
+plt.title('Residual Distribution')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
     
